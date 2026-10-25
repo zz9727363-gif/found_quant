@@ -1,0 +1,69 @@
+﻿import os
+from decimal import Decimal
+
+import pandas as pd
+
+# 沿用原脚本的代理配置。
+os.environ["HTTP_PROXY"] = "http://127.0.0.1:7897"
+os.environ["HTTPS_PROXY"] = "http://127.0.0.1:7897"
+
+BASE_AMOUNT = 10  # 基础定投金额，单位：元
+
+
+def calculate_investment_amount(change_percent):
+    # 涨跌幅单位为百分数，例如 -2.5 表示下跌 2.5%。
+    if change_percent < -2:
+        return BASE_AMOUNT * 2
+    elif change_percent > 2:
+        return 0
+    return BASE_AMOUNT
+
+
+def main():
+    try:
+        import akshare as ak
+
+        # .NDX 是纳斯达克100指数。
+        history = ak.index_us_stock_sina(symbol=".NDX")
+        if history.empty or not {"date", "close"}.issubset(history.columns):
+            raise ValueError("未获取到有效的日期和收盘价数据。")
+
+        history = history[["date", "close"]].copy()
+        history["date"] = pd.to_datetime(history["date"], errors="coerce")
+        history["close"] = pd.to_numeric(history["close"], errors="coerce")
+        history = (
+            history.dropna(subset=["date", "close"])
+            .sort_values("date")
+            .drop_duplicates(subset=["date"], keep="last")
+        )
+        if len(history) < 2:
+            raise ValueError("有效行情不足两个交易日，无法计算涨跌幅。")
+
+        previous = history.iloc[-2]
+        latest = history.iloc[-1]
+        # 使用十进制计算，避免浮点误差影响恰好 ±2% 的判断。
+        previous_close = Decimal(str(previous["close"]))
+        latest_close = Decimal(str(latest["close"]))
+        if not all(p.is_finite() and p > 0 for p in (previous_close, latest_close)):
+            raise ValueError("收盘价必须是有效的正数。")
+
+        change_percent = (latest_close - previous_close) / previous_close * 100
+        final_amount = calculate_investment_amount(change_percent)
+
+        print("=" * 48)
+        print("纳斯达克100指数 · 智能定投计算器")
+        print(f"行情日期：{latest['date']:%Y-%m-%d}")
+        print(f"前一交易日收盘价：{previous_close:,.2f} 点")
+        print(f"最新交易日收盘价：{latest_close:,.2f} 点")
+        print(f"今天的涨跌幅（最新交易日）：{change_percent:+.2f}%")
+        print(f"基础定投金额：{BASE_AMOUNT} 元")
+        print(f"最终建议今天买入：{final_amount} 元")
+        print("=" * 48)
+        print("提示：以上按最新可用日线计算，休市日沿用最近交易日行情。")
+
+    except Exception as error:
+        print(f"计算失败：{error}")
+
+
+if __name__ == "__main__":
+    main()

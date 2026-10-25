@@ -1,0 +1,80 @@
+import os
+from decimal import Decimal
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
+
+# 保留原来的代理设置，仅用于获取纳指行情。
+os.environ["HTTP_PROXY"] = "http://127.0.0.1:7897"
+os.environ["HTTPS_PROXY"] = "http://127.0.0.1:7897"
+
+import pandas as pd
+import yfinance as yf
+
+BASE_AMOUNT = 10  # 基础定投金额，单位：元
+
+
+def calculate_investment_amount(change_percent):
+    # 跌幅大于等于 2% 买 20 元，涨幅大于等于 2% 买 0 元。
+    if change_percent <= -2:
+        return BASE_AMOUNT * 2
+    if change_percent >= 2:
+        return 0
+    return BASE_AMOUNT
+
+
+def main():
+    try:
+        # 获取最近一个月日线，周末及休市日自然跳过。
+        history = yf.Ticker("^NDX").history(
+            period="1mo", interval="1d", auto_adjust=False, timeout=20,
+        )
+        if history.empty or "Close" not in history.columns:
+            raise ValueError("未获取到纳指行情，请检查网络和代理")
+
+        closes = pd.to_numeric(history["Close"], errors="coerce").dropna().sort_index()
+        # 美东常规收盘前排除当天尚未结束的日线，避免盘中值改变结果。
+        now = datetime.now(ZoneInfo("America/New_York"))
+        closes = closes[[
+            stamp.date() < now.date()
+            or (stamp.date() == now.date() and now.time() >= time(16, 0))
+            for stamp in closes.index
+        ]]
+        if len(closes) < 2:
+            raise ValueError("有效交易日不足两个，无法计算涨跌幅")
+
+        # 使用十进制数判断阈值，不先四舍五入涨跌幅。
+        previous_close = Decimal(str(closes.iloc[-2]))
+        latest_close = Decimal(str(closes.iloc[-1]))
+        if not all(value.is_finite() and value > 0 for value in (previous_close, latest_close)):
+            raise ValueError("纳指收盘价无效")
+        change_percent = (latest_close - previous_close) / previous_close * 100
+        amount = calculate_investment_amount(change_percent)
+
+        if change_percent <= -2:
+            message = "触发大跌奖励：定投金额翻倍。"
+        elif change_percent >= 2:
+            message = "触发大涨暂停：本次暂停定投。"
+        else:
+            message = "常规定投：按基础金额买入。"
+
+        # 显示行情日期，避免休市日被误认为是当天的新信号。
+        print("=" * 54)
+        print("纳斯达克100指数 · 每日涨跌参考")
+        print(f"最新交易日期：{closes.index[-1]:%Y-%m-%d}（美东）")
+        print(f"前一交易日期：{closes.index[-2]:%Y-%m-%d}（美东）")
+        print(f"前一交易日收盘价：{previous_close:,.2f} 点")
+        print(f"最新交易日收盘价：{latest_close:,.2f} 点")
+        print(f"单日涨跌幅：{change_percent:+.4f}%")
+        print("-" * 54)
+        print(message)
+        print(f"按设定规则，建议买入：{amount} 元")
+        print("=" * 54)
+        print("仅按纳指涨跌幅计算，非场外基金净值涨跌；不会自动下单。")
+        print("休市日沿用最近行情；同一交易日期重复运行不会产生新信号。")
+    except Exception as error:
+        print(f"获取或计算失败：{error}")
+        print("数据不可用，本次暂停。按设定规则，建议买入：0 元")
+
+
+if __name__ == "__main__":
+    main()
