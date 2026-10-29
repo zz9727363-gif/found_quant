@@ -1,9 +1,9 @@
 name: 纳指定投计算与微信推送
 
 on:
-  # GitHub Actions 使用 UTC；06:17 UTC = 北京时间 14:17，避开整点高峰。
+  # GitHub Actions 使用 UTC；03:00 UTC = 北京时间 11:00。
   schedule:
-    - cron: "17 6 * * *"
+    - cron: "0 3 * * 1-5"
   workflow_dispatch:
 
 jobs:
@@ -27,3 +27,4 @@ jobs:
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
         run: python ndx_price.py
          
+
